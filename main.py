@@ -6,9 +6,12 @@ import torch.nn.functional as F
 
 from torch_geometric.datasets import TUDataset
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GraphConv, TopKPooling
+from torch_geometric.nn import GraphConv, SAGPooling, TopKPooling
 from torch_geometric.nn import global_max_pool as gmp
 from torch_geometric.nn import global_mean_pool as gap
+
+from models import NodeDropPooling
+
 
 
 parser = argparse.ArgumentParser(description='Train a graph classification model.')
@@ -16,6 +19,7 @@ parser.add_argument('--lr', type=float, default=0.0005)
 parser.add_argument('--hidden', type=int, default=128)
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--pr', type=float, default=0.8)
+parser.add_argument('--pool', choices=['topk', 'sag', 'ndrp-new'], default='topk')
 parser.add_argument('--batch-size', type=int, default=60)
 parser.add_argument('--epochs', type=int, default=200)
 args = parser.parse_args()
@@ -31,16 +35,22 @@ train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
 
 class Net(torch.nn.Module):
-    def __init__(self, hidden_channels=128, dropout=0.5, pooling_ratio=0.8):
+    def __init__(self, hidden_channels=128, dropout=0.5, pooling_ratio=0.8,
+                 pool='topk'):
         super().__init__()
         self.dropout = dropout
+        pooling_class = {
+            'topk': TopKPooling,
+            'sag': SAGPooling,
+            'ndrp-new': NodeDropPooling,
+        }[pool]
 
         self.conv1 = GraphConv(dataset.num_features, hidden_channels)
-        self.pool1 = TopKPooling(hidden_channels, ratio=pooling_ratio)
+        self.pool1 = pooling_class(hidden_channels, ratio=pooling_ratio)
         self.conv2 = GraphConv(hidden_channels, hidden_channels)
-        self.pool2 = TopKPooling(hidden_channels, ratio=pooling_ratio)
+        self.pool2 = pooling_class(hidden_channels, ratio=pooling_ratio)
         self.conv3 = GraphConv(hidden_channels, hidden_channels)
-        self.pool3 = TopKPooling(hidden_channels, ratio=pooling_ratio)
+        self.pool3 = pooling_class(hidden_channels, ratio=pooling_ratio)
 
         self.lin1 = torch.nn.Linear(2 * hidden_channels, hidden_channels)
         self.lin2 = torch.nn.Linear(hidden_channels, 64)
@@ -72,7 +82,7 @@ class Net(torch.nn.Module):
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = Net(args.hidden, args.dropout, args.pr).to(device)
+model = Net(args.hidden, args.dropout, args.pr, args.pool).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 
